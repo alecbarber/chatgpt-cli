@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ var (
 	showVersion     bool
 	showConfig      bool
 	interactiveMode bool
+	linesMode       bool
 	listModels      bool
 	listThreads     bool
 	modelName       string
@@ -53,6 +55,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&clearHistory, "clear-history", false, "Clear all prior conversation context for the current thread")
 	rootCmd.PersistentFlags().BoolVarP(&showConfig, "config", "c", false, "Display the configuration")
 	rootCmd.PersistentFlags().BoolVarP(&showVersion, "version", "v", false, "Display the version information")
+	rootCmd.PersistentFlags().BoolVar(&linesMode, "lines", false, "Execute each each line of the input as a separate query.")
 	rootCmd.PersistentFlags().BoolVarP(&listModels, "list-models", "l", false, "List available models")
 	rootCmd.PersistentFlags().BoolVarP(&listThreads, "list-threads", "", false, "List available threads")
 	rootCmd.PersistentFlags().StringVar(&modelName, "set-model", "", "Set a new default GPT model by specifying the model name")
@@ -183,7 +186,8 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Check if there is input from the pipe (stdin)
 	stat, _ := os.Stdin.Stat()
-	if (stat.Mode() & os.ModeCharDevice) == 0 {
+	hasStdin := (stat.Mode() & os.ModeCharDevice) == 0
+	if hasStdin && !linesMode {
 		pipeContent, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return fmt.Errorf("failed to read from pipe: %w", err)
@@ -252,6 +256,25 @@ func run(cmd *cobra.Command, args []string) error {
 				} else {
 					fmt.Println()
 					qNum++
+				}
+			}
+		}
+	} else if linesMode && hasStdin {
+		baseQuery := strings.Join(args, " ")
+		// Read stdin line by line
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			line := scanner.Text()
+
+			if queryMode {
+				result, _, err := client.Query(strings.Join([]string{baseQuery, line}, "\n\n"))
+				if err != nil {
+					return err
+				}
+				fmt.Println(result)
+			} else {
+				if err := client.Stream(strings.Join([]string{baseQuery, line}, "\n\n")); err != nil {
+					return err
 				}
 			}
 		}
